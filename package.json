@@ -1,0 +1,20 @@
+{
+  "name": "lead-gen-sys",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Sovereign, self-hosted, vertical-agnostic lead distribution CRM with Ping & Post auctions.",
+  "workspaces": ["api", "web"],
+  "scripts": {
+    "db:up": "docker compose up -d db",
+    "db:down": "docker compose down",
+    "setup": "npm install && npm run db:up && npm --workspace api run migrate && npm --workspace api run seed",
+    "dev": "concurrently -n api,web -c cyan,magenta \"npm --workspace api run dev\" \"npm --workspace web run dev\"",
+    "build": "npm --workspace api run build && npm --workspace web run build",
+    "test": "npm --workspace api run test",
+    "migrate": "npm --workspace api run migrate",
+    "seed": "npm --workspace api run seed"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

@@ -1,0 +1,193 @@
+// Sovereign Lead Distribution CRM — data model.
+//
+// Nothing in this schema names an industry. A "vertical" is a user-defined row
+// whose `fieldSchema` describes its attributes, and every other entity refers to
+// verticals by id. Adding a niche is an INSERT, never a migration.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// A user-defined niche. `fieldSchema` drives ping validation, the dynamic
+/// lead forms in the dashboard, and the campaign filter builder.
+model Vertical {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  name      String
+  active    Boolean  @default(true)
+  /// Array of { name, label, type: "text"|"number"|"enum"|"boolean", required, options?[] }
+  fieldSchema Json   @default("[]")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  campaigns Campaign[]
+  pings     Ping[]
+  leads     Lead[]
+
+  @@index([active])
+}
+
+/// A lead publisher/vendor. Authenticates to the public API with `X-Api-Key`.
+model Source {
+  id        String   @id @default(uuid())
+  name      String
+  apiKey    String   @unique
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  pings Ping[]
+  leads Lead[]
+
+  @@index([active])
+}
+
+/// A lead purchaser. Delivery is a plain configurable webhook — any system that
+/// can receive an HTTP request can be a buyer.
+model Buyer {
+  id             String   @id @default(uuid())
+  name           String
+  active         Boolean  @default(true)
+  /// Empty/null => leads are marked `sold` and left for manual pickup.
+  deliveryUrl    String?
+  deliveryMethod DeliveryMethod @default(json)
+  /// Extra outbound HTTP headers, e.g. { "Authorization": "Bearer ..." }
+  deliveryHeaders Json    @default("{}")
+  /// Optional { outgoingName: "incoming.path" } remap applied to the payload.
+  fieldMapping   Json     @default("{}")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  campaigns Campaign[]
+  leads     Lead[]
+}
+
+enum DeliveryMethod {
+  json
+  form
+  xml
+}
+
+/// A buyer's standing order for a vertical: what they'll pay, and for what.
+model Campaign {
+  id              String   @id @default(uuid())
+  buyerId         String
+  buyer           Buyer    @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+  name            String
+  verticalId      String
+  vertical        Vertical @relation(fields: [verticalId], references: [id], onDelete: Cascade)
+  active          Boolean  @default(true)
+  bid             Decimal  @db.Decimal(10, 2)
+  /// Lower wins under the `priority` routing strategy.
+  routingPriority Int      @default(100)
+  /// Empty array = accepts every state / every zip.
+  states          String[] @default([])
+  zips            String[] @default([])
+  /// Array of { field, op, value } evaluated against the vertical's fields (AND).
+  filters         Json     @default("[]")
+  dailyCap        Int      @default(0)
+  monthlyCap      Int      @default(0)
+  concurrencyCap  Int      @default(0)
+  /// { days: [1..7], start: "HH:MM", end: "HH:MM" } — empty object = 24/7.
+  schedule        Json     @default("{}")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  leads Lead[]
+
+  @@index([verticalId, active])
+  @@index([buyerId])
+}
+
+enum PingStatus {
+  open
+  no_bid
+  posted
+  expired
+}
+
+/// Phase 1 of the auction: non-PII qualifying attributes only. Never sells.
+model Ping {
+  id             String     @id @default(uuid())
+  sourceId       String
+  source         Source     @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  verticalId     String
+  vertical       Vertical   @relation(fields: [verticalId], references: [id], onDelete: Cascade)
+  /// Non-PII: { state, zip, ...vertical attributes }
+  payload        Json
+  /// Ranked offers returned to the source: [{ campaignId, buyerId, bid, ... }]
+  matched        Json       @default("[]")
+  /// Campaigns that did not bid, with a machine-readable reason.
+  rejected       Json       @default("[]")
+  bestCampaignId String?
+  bestBid        Decimal?   @db.Decimal(10, 2)
+  status         PingStatus @default(open)
+  expiresAt      DateTime
+  createdAt      DateTime   @default(now())
+
+  leads Lead[]
+
+  @@index([sourceId, createdAt])
+  @@index([verticalId, createdAt])
+  @@index([status])
+  @@index([createdAt])
+}
+
+enum LeadStatus {
+  sold
+  delivered
+  delivery_failed
+  rejected_dup
+}
+
+/// Phase 2: the awarded lead, including PII, plus the delivery outcome.
+model Lead {
+  id               String     @id @default(uuid())
+  pingId           String?
+  ping             Ping?      @relation(fields: [pingId], references: [id], onDelete: SetNull)
+  sourceId         String
+  source           Source     @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  campaignId       String?
+  campaign         Campaign?  @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  buyerId          String?
+  buyer            Buyer?     @relation(fields: [buyerId], references: [id], onDelete: SetNull)
+  verticalId       String
+  vertical         Vertical   @relation(fields: [verticalId], references: [id], onDelete: Cascade)
+  price            Decimal    @db.Decimal(10, 2)
+  /// Full lead payload including PII.
+  payload          Json
+  phoneHash        String?
+  emailHash        String?
+  status           LeadStatus @default(sold)
+  deliveryResponse Json?
+  deliveryAttempts Int        @default(0)
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  @@index([verticalId, phoneHash, emailHash])
+  @@index([createdAt])
+  @@index([campaignId, createdAt])
+  @@index([buyerId, createdAt])
+  @@index([sourceId, createdAt])
+  @@index([status])
+}
+
+/// Global key/value config: routing strategy, dedup window, ping TTL.
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model AdminUser {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
