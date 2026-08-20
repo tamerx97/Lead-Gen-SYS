@@ -1,0 +1,340 @@
+###############################################################################
+# Lead Distribution CRM — example requests
+#
+# Works with the VS Code REST Client extension, JetBrains HTTP client, or as a
+# copy-paste reference for curl. Run `npm run seed` first.
+#
+# The two verticals below are SEED EXAMPLES. Nothing in the engine knows about
+# home improvement or insurance — swap `vertical` for your own key and the same
+# calls work unchanged.
+###############################################################################
+
+@host = http://localhost:4000
+
+# Source API keys printed by the seed. Rotate them (Sources -> Rotate key)
+# before this instance is reachable from anywhere but localhost.
+@acmeKey = lgs_seed_acme_5f3a9c21d84b47e0aa16
+@partnerKey = lgs_seed_partner_2b7e4d10c96f38a5bb42
+
+@adminEmail = admin@leadgen.local
+@adminPassword = admin12345
+
+
+###############################################################################
+# Health
+###############################################################################
+
+### Is the API up and the database reachable?
+GET {{host}}/health
+
+
+###############################################################################
+# VERTICAL 1 — home_improvement
+# Fields: homeowner (bool, required), property_age (number),
+#         timeline (enum, required), project_type (enum)
+###############################################################################
+
+### 1a. PING — a lead that several campaigns want. Returns ranked offers.
+# @name pingHome
+POST {{host}}/api/ping
+Content-Type: application/json
+X-Api-Key: {{acmeKey}}
+
+{
+  "vertical": "home_improvement",
+  "state": "CA",
+  "zip": "90210",
+  "homeowner": true,
+  "property_age": 30,
+  "timeline": "immediately",
+  "project_type": "roofing"
+}
+
+### 1b. POST — sell it. Uses the ping_id from the response above.
+# Omit `campaign_id` to take the top-ranked winner, or pass one of the
+# campaign_ids from `offers[]` to award it to a different buyer.
+POST {{host}}/api/post
+Content-Type: application/json
+X-Api-Key: {{acmeKey}}
+
+{
+  "ping_id": "{{pingHome.response.body.ping_id}}",
+  "first_name": "Jane",
+  "last_name": "Doe",
+  "phone": "555-010-1234",
+  "email": "jane.doe@example.com",
+  "address": "742 Evergreen Terrace",
+  "state": "CA",
+  "zip": "90210",
+  "homeowner": true,
+  "property_age": 30,
+  "timeline": "immediately",
+  "project_type": "roofing"
+}
+
+### 1c. DEDUP — same phone, same vertical, inside the window.
+# Re-run 1a, then this: the response is accepted:false, status "rejected_dup".
+POST {{host}}/api/post
+Content-Type: application/json
+X-Api-Key: {{acmeKey}}
+
+{
+  "ping_id": "PASTE_A_FRESH_PING_ID_HERE",
+  "first_name": "Janey",
+  "last_name": "Doe",
+  "phone": "(555) 010-1234",
+  "email": "different.address@example.com",
+  "state": "CA",
+  "zip": "90210",
+  "homeowner": true,
+  "timeline": "immediately"
+}
+
+### 1d. NO BID — geo and attributes that satisfy nothing.
+# Returns status "no_bid" with a rejected[] explaining every decline.
+POST {{host}}/api/ping
+Content-Type: application/json
+X-Api-Key: {{acmeKey}}
+
+{
+  "vertical": "home_improvement",
+  "state": "WY",
+  "zip": "82001",
+  "homeowner": false,
+  "timeline": "researching"
+}
+
+### 1e. VALIDATION — a required field is missing, so the ping is rejected 400.
+POST {{host}}/api/ping
+Content-Type: application/json
+X-Api-Key: {{acmeKey}}
+
+{
+  "vertical": "home_improvement",
+  "state": "CA",
+  "zip": "90210",
+  "property_age": 30
+}
+
+
+###############################################################################
+# VERTICAL 2 — insurance
+# Entirely different field vocabulary, identical engine and endpoints.
+# Fields: coverage_type (enum, required), current_insurer (text),
+#         monthly_premium (number)
+###############################################################################
+
+### 2a. PING — auto coverage in Texas. Two campaigns bid.
+# @name pingInsurance
+POST {{host}}/api/ping
+Content-Type: application/json
+X-Api-Key: {{partnerKey}}
+
+{
+  "vertical": "insurance",
+  "state": "TX",
+  "zip": "78701",
+  "coverage_type": "auto",
+  "current_insurer": "Acme Mutual",
+  "monthly_premium": 140
+}
+
+### 2b. POST — sell it.
+# The winning buyer here has a fieldMapping, so the outgoing webhook body is
+# reshaped (LeadID, FirstName, Product, Premium…) rather than passed through.
+POST {{host}}/api/post
+Content-Type: application/json
+X-Api-Key: {{partnerKey}}
+
+{
+  "ping_id": "{{pingInsurance.response.body.ping_id}}",
+  "first_name": "Sam",
+  "last_name": "Rivera",
+  "phone": "555-010-7788",
+  "email": "sam.rivera@example.com",
+  "state": "TX",
+  "zip": "78701",
+  "coverage_type": "auto",
+  "current_insurer": "Acme Mutual",
+  "monthly_premium": 140
+}
+
+
+###############################################################################
+# Mock buyer (development only — mounted unless NODE_ENV=production)
+###############################################################################
+
+### What did the bundled mock buyer actually receive?
+GET {{host}}/mock/deliveries
+
+### Clear the mock buyer's log.
+DELETE {{host}}/mock/deliveries
+
+
+###############################################################################
+# Admin / management API
+# Sign in first; the session is an httpOnly cookie the client re-sends.
+###############################################################################
+
+### Sign in
+# @name login
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{adminEmail}}",
+  "password": "{{adminPassword}}"
+}
+
+### Who am I?
+GET {{host}}/api/auth/me
+
+### List verticals
+GET {{host}}/api/verticals
+
+### CREATE A NEW VERTICAL — no code change, no migration, no redeploy.
+# It is immediately selectable in campaigns, the Playground, and /api/ping.
+POST {{host}}/api/verticals
+Content-Type: application/json
+
+{
+  "key": "commercial_solar",
+  "name": "Commercial Solar",
+  "active": true,
+  "fieldSchema": [
+    { "name": "roof_sqft", "label": "Roof Area (sq ft)", "type": "number", "required": true },
+    { "name": "monthly_kwh", "label": "Monthly kWh", "type": "number", "required": false },
+    { "name": "ownership", "label": "Building Ownership", "type": "enum", "required": true,
+      "options": ["owned", "leased"] },
+    { "name": "decision_maker", "label": "Decision Maker", "type": "boolean", "required": false }
+  ]
+}
+
+### Ping the brand-new vertical straight away.
+POST {{host}}/api/ping
+Content-Type: application/json
+X-Api-Key: {{acmeKey}}
+
+{
+  "vertical": "commercial_solar",
+  "state": "CA",
+  "zip": "90210",
+  "roof_sqft": 12000,
+  "ownership": "owned",
+  "decision_maker": true
+}
+
+### List campaigns
+GET {{host}}/api/campaigns
+
+### Create a campaign for the new vertical (fill in real buyerId/verticalId)
+POST {{host}}/api/campaigns
+Content-Type: application/json
+
+{
+  "buyerId": "PASTE_BUYER_ID",
+  "verticalId": "PASTE_VERTICAL_ID",
+  "name": "Large Roof Owners",
+  "bid": 85.00,
+  "routingPriority": 20,
+  "states": ["CA", "AZ", "NV"],
+  "zips": [],
+  "filters": [
+    { "field": "roof_sqft", "op": "gte", "value": 5000 },
+    { "field": "ownership", "op": "eq", "value": "owned" }
+  ],
+  "dailyCap": 20,
+  "monthlyCap": 0,
+  "concurrencyCap": 0,
+  "schedule": { "days": [1, 2, 3, 4, 5], "start": "08:00", "end": "18:00" }
+}
+
+### Toggle a campaign off
+PATCH {{host}}/api/campaigns/PASTE_CAMPAIGN_ID
+Content-Type: application/json
+
+{ "active": false }
+
+### List buyers
+GET {{host}}/api/buyers
+
+### Create a buyer — delivery is just a webhook.
+POST {{host}}/api/buyers
+Content-Type: application/json
+
+{
+  "name": "Example CRM",
+  "active": true,
+  "deliveryUrl": "https://buyer.example.com/api/leads",
+  "deliveryMethod": "json",
+  "deliveryHeaders": { "Authorization": "Bearer replace-me" },
+  "fieldMapping": {
+    "LeadID": "lead_id",
+    "FirstName": "first_name",
+    "LastName": "last_name",
+    "Phone": "phone",
+    "Email": "email",
+    "State": "state",
+    "PostalCode": "zip",
+    "Cost": "price"
+  }
+}
+
+### Send a test delivery to a buyer's endpoint
+POST {{host}}/api/buyers/PASTE_BUYER_ID/test-delivery
+
+### Sources (API keys)
+GET {{host}}/api/sources
+
+### Rotate a source's API key — the old key stops working immediately
+POST {{host}}/api/sources/PASTE_SOURCE_ID/rotate-key
+
+### Leads, filtered and paginated
+GET {{host}}/api/leads?page=1&pageSize=25&status=delivered
+
+### Retry delivery for a lead whose buyer endpoint was down
+POST {{host}}/api/leads/PASTE_LEAD_ID/redeliver
+
+### Pings
+GET {{host}}/api/pings?page=1&pageSize=25
+
+### Headline stats
+GET {{host}}/api/stats?days=30
+
+### Daily series for the charts
+GET {{host}}/api/stats/timeseries?days=30
+
+### Rollups: by=buyer | campaign | source | vertical
+GET {{host}}/api/stats/rollup?by=buyer&days=30
+
+### Read settings
+GET {{host}}/api/settings
+
+### SWITCH ROUTING STRATEGY — bid | priority | round_robin
+# Re-run ping 1a afterwards: a different campaign wins the same auction.
+PATCH {{host}}/api/settings
+Content-Type: application/json
+
+{ "routingStrategy": "priority" }
+
+### Back to highest-bid-wins
+PATCH {{host}}/api/settings
+Content-Type: application/json
+
+{ "routingStrategy": "bid" }
+
+### Dedup window, ping TTL, timezone, phone region
+# `defaultPhoneRegion` decides how phone numbers written WITHOUT a country code
+# are read. Numbers sent as +E.164 are understood regardless.
+PATCH {{host}}/api/settings
+Content-Type: application/json
+
+{
+  "dedupWindowDays": 30,
+  "pingTtlSeconds": 300,
+  "timezone": "America/Los_Angeles",
+  "defaultPhoneRegion": "US"
+}
+
+### Sign out
+POST {{host}}/api/auth/logout
