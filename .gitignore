@@ -6,6 +6,7 @@ build/
 *.log
 .DS_Store
 coverage/
+*.tsbuildinfo
 api/prisma/*.db
 web/dist/
 .vite/
