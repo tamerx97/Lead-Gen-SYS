@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { logger } from '../logger';
 
 /**
@@ -14,18 +14,26 @@ interface MockDelivery {
   receivedAt: string;
   buyer: string;
   contentType: string;
+  /** Parsed body for json/form; the raw string for xml and anything else. */
   body: unknown;
+  /** Always the bytes as received, so xml deliveries are inspectable too. */
+  raw: string;
 }
 
 const received: MockDelivery[] = [];
 const MAX_KEPT = 200;
 
-mockRouter.post('/buyer/:slug', (req, res) => {
+// The app-level json/urlencoded parsers have already run; this catches whatever
+// they left untouched (notably XML) so every delivery is recorded verbatim.
+const captureRaw = express.text({ type: '*/*', limit: '1mb' });
+
+mockRouter.post('/buyer/:slug', captureRaw, (req, res) => {
   const entry: MockDelivery = {
     receivedAt: new Date().toISOString(),
     buyer: req.params.slug,
     contentType: req.header('content-type') ?? 'unknown',
     body: req.body,
+    raw: typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? {}),
   };
   received.unshift(entry);
   if (received.length > MAX_KEPT) received.length = MAX_KEPT;
@@ -39,7 +47,7 @@ mockRouter.post('/buyer/:slug', (req, res) => {
 });
 
 /** A buyer endpoint that always rejects, for exercising the failure path. */
-mockRouter.post('/buyer-reject/:slug', (req, res) => {
+mockRouter.post('/buyer-reject/:slug', captureRaw, (req, res) => {
   logger.info('mock buyer rejected lead', { buyer: req.params.slug });
   res.status(422).json({ ok: false, error: 'Mock buyer rejects everything' });
 });
