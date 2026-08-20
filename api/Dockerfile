@@ -16,7 +16,11 @@ RUN npm --workspace api run generate \
  && npm --workspace api run build \
  && npm prune --omit=dev --workspace api --include-workspace-root \
  # `npm prune` can drop the generated client, so regenerate after pruning.
- && npm --workspace api run generate
+ && npm --workspace api run generate \
+ # npm workspaces hoist dependencies to the root node_modules, so api/node_modules
+ # usually does not exist. Create it so the runtime COPY below cannot fail, while
+ # still carrying anything npm did nest there for a version conflict.
+ && mkdir -p api/node_modules
 
 # ---- Runtime stage ----------------------------------------------------------
 FROM node:20-alpine AS runtime

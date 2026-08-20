@@ -541,7 +541,9 @@ docker compose -f docker-compose.prod.yml exec app \
 ```
 
 Caddy provisions the TLS certificate for `APP_DOMAIN` on its own and migrations
-run on boot. DEPLOY.md also covers running without Docker (systemd), split
+run on boot. Every build step in the Dockerfiles has been run against a clean
+checkout and the assembled runtime verified; see the note at the top of
+DEPLOY.md for exactly what that does and doesn't cover. DEPLOY.md also covers running without Docker (systemd), split
 web/API tiers, managed Postgres, PaaS (Render/Railway/Fly), backups, upgrades,
 scaling and monitoring.
 

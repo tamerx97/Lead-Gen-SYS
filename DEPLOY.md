@@ -14,6 +14,16 @@ port, and no CORS to configure**. The session cookie just works.
 
 ---
 
+> **Build verification status.** Every step in all three Dockerfiles has been
+> executed against a clean checkout — `npm ci` (full and workspace-scoped),
+> Prisma generate, both builds, `npm prune --omit=dev`, the post-prune
+> regenerate, and every runtime `COPY` path. The assembled runtime tree was then
+> booted and served the product end to end. What has *not* run is `docker build`
+> itself, because image pulls were blocked in the authoring environment, so the
+> base images (`node:20-alpine`, `nginx:1.27-alpine`, `caddy:2-alpine`,
+> `postgres:16-alpine`) are unproven and `web/nginx.conf` has not been
+> syntax-checked by nginx.
+
 ## Before anything: what you need
 
 - A server. 1 vCPU / 1 GB RAM handles a lot of pings; 2 vCPU / 2 GB is
