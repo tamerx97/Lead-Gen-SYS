@@ -1,0 +1,156 @@
+name: CI
+
+# Runs the test suite and — crucially — actually builds and boots the Docker
+# image. The image build could not be exercised where this project was authored,
+# so this workflow is what proves it works.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: leadgen
+          POSTGRES_PASSWORD: leadgen
+          POSTGRES_DB: leadgen
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U leadgen -d leadgen"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      DATABASE_URL: postgresql://leadgen:leadgen@localhost:5432/leadgen?schema=public
+      JWT_SECRET: ci-only-secret-not-used-in-production-0123456789
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Apply migrations
+        run: npm --workspace api run migrate
+
+      - name: Typecheck (api)
+        run: npx tsc --noEmit -p api/tsconfig.json
+
+      - name: Typecheck (web)
+        run: npm --workspace web run typecheck
+
+      - name: Unit + integration tests
+        run: npm --workspace api run test
+
+      - name: Build both workspaces
+        run: npm run build
+
+  docker:
+    name: Docker image builds and boots
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: leadgen
+          POSTGRES_PASSWORD: leadgen
+          POSTGRES_DB: leadgen
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U leadgen -d leadgen"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the single-container image
+        run: docker build -t leadgen:ci .
+
+      - name: Build the split-tier images
+        run: |
+          docker build -f api/Dockerfile -t leadgen-api:ci .
+          docker build -f web/Dockerfile -t leadgen-web:ci .
+
+      - name: Boot the image and prove it serves
+        run: |
+          set -euo pipefail
+
+          docker run -d --name leadgen-test --network host \
+            -e NODE_ENV=production \
+            -e PORT=4000 \
+            -e DATABASE_URL='postgresql://leadgen:leadgen@localhost:5432/leadgen?schema=public' \
+            -e JWT_SECRET='ci-only-secret-not-used-in-production-0123456789' \
+            leadgen:ci
+
+          # Migrations run on boot, so give the container a moment to finish.
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:4000/health > /dev/null 2>&1; then
+              echo "container is healthy after ${i}s"
+              break
+            fi
+            if [ "$i" = "30" ]; then
+              echo "::error::container never became healthy"
+              docker logs leadgen-test
+              exit 1
+            fi
+            sleep 1
+          done
+
+          echo "--- /health ---"
+          curl -fsS http://localhost:4000/health
+
+          echo "--- dashboard is served by the same process ---"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:4000/)" = "200"
+
+          echo "--- client-side routes fall back to the app shell ---"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:4000/playground)" = "200"
+
+          echo "--- unknown API routes still 404 as JSON, not as the app shell ---"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:4000/api/nope)" = "404"
+
+          echo "--- the dev mock buyer must NOT exist in a production image ---"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:4000/mock/buyer/x)" = "404"
+
+          echo "--- bootstrap an admin the way a real deployment does ---"
+          docker exec leadgen-test node api/dist/src/scripts/createAdmin.js \
+            ci@example.com 'a-long-enough-passphrase'
+
+          echo "--- and that admin can sign in ---"
+          curl -fsS -X POST http://localhost:4000/api/auth/login \
+            -H 'Content-Type: application/json' \
+            -d '{"email":"ci@example.com","password":"a-long-enough-passphrase"}' \
+            | grep -q 'ci@example.com'
+
+          echo "ALL CONTAINER CHECKS PASSED"
+
+      - name: Container logs (on failure)
+        if: failure()
+        run: docker logs leadgen-test || true
+
+      - name: Validate the compose files
+        env:
+          APP_DOMAIN: example.com
+          POSTGRES_PASSWORD: ci-password
+          JWT_SECRET: ci-only-secret-not-used-in-production-0123456789
+        run: |
+          docker compose config > /dev/null
+          docker compose -f docker-compose.prod.yml config > /dev/null
+          echo "compose files valid"

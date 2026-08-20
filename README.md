@@ -12,6 +12,10 @@ in the dashboard. There is no industry name anywhere in the engine.
 
 ---
 
+> **Just want it running?** Read **[START-HERE.md](./START-HERE.md)** instead —
+> a plain-language walkthrough that gets you online in about 20 minutes with no
+> technical knowledge. Everything below is the technical reference.
+
 ## Table of contents
 
 - [What it does](#what-it-does)
@@ -541,9 +545,7 @@ docker compose -f docker-compose.prod.yml exec app \
 ```
 
 Caddy provisions the TLS certificate for `APP_DOMAIN` on its own and migrations
-run on boot. Every build step in the Dockerfiles has been run against a clean
-checkout and the assembled runtime verified; see the note at the top of
-DEPLOY.md for exactly what that does and doesn't cover. DEPLOY.md also covers running without Docker (systemd), split
+run on boot. The image build and boot are verified on every push by CI. DEPLOY.md also covers running without Docker (systemd), split
 web/API tiers, managed Postgres, PaaS (Render/Railway/Fly), backups, upgrades,
 scaling and monitoring.
 
@@ -650,6 +652,8 @@ it works directly as a load-balancer and container health check.
 
 ```
 .
+├── START-HERE.md               Plain-language setup guide (start here)
+├── install.sh                  One-command installer for a fresh server
 ├── docker-compose.yml          Postgres for local development
 ├── docker-compose.prod.yml     Production: Postgres + app + Caddy (auto-TLS)
 ├── Dockerfile                  Single container: API + dashboard in one process

@@ -5,6 +5,9 @@
  * `credentials: 'include'` and there is no token for JS to leak.
  */
 
+/** Fired whenever the API reports the session is no longer valid. */
+export const UNAUTHORIZED_EVENT = 'leadgen:unauthorized';
+
 export class ApiError extends Error {
   status: number;
   details?: unknown;
@@ -43,6 +46,12 @@ async function request<T>(
   }
 
   if (!response.ok) {
+    // A 401 on any management call means the session is gone — expired, or
+    // signed out in another tab. Announce it so the app can return to the login
+    // screen instead of leaving a dashboard up that can no longer load anything.
+    if (response.status === 401 && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
+    }
     const payload = body as { error?: string; details?: unknown } | null;
     throw new ApiError(
       response.status,

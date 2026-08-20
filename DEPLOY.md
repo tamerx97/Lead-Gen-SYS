@@ -14,15 +14,13 @@ port, and no CORS to configure**. The session cookie just works.
 
 ---
 
-> **Build verification status.** Every step in all three Dockerfiles has been
-> executed against a clean checkout — `npm ci` (full and workspace-scoped),
-> Prisma generate, both builds, `npm prune --omit=dev`, the post-prune
-> regenerate, and every runtime `COPY` path. The assembled runtime tree was then
-> booted and served the product end to end. What has *not* run is `docker build`
-> itself, because image pulls were blocked in the authoring environment, so the
-> base images (`node:20-alpine`, `nginx:1.27-alpine`, `caddy:2-alpine`,
-> `postgres:16-alpine`) are unproven and `web/nginx.conf` has not been
-> syntax-checked by nginx.
+> **Build verification status.** The container build is exercised on every push
+> by [CI](.github/workflows/ci.yml): it builds all three images, boots the
+> single-container image against a real Postgres, and asserts it serves the
+> dashboard, handles client-side routes, still 404s unknown API routes as JSON,
+> excludes the dev mock buyer, and can bootstrap an admin who then signs in.
+> `web/nginx.conf` is loaded by the nginx image build but its runtime behaviour
+> is not yet asserted.
 
 ## Before anything: what you need
 
