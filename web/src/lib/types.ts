@@ -140,6 +140,7 @@ export interface PlatformSettings {
   dedupWindowDays: number;
   pingTtlSeconds: number;
   timezone: string;
+  defaultPhoneRegion: string;
   routingStrategies: RoutingStrategy[];
 }
 

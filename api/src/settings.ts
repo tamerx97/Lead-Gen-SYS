@@ -11,6 +11,7 @@ export const SETTING_KEYS = {
   dedupWindowDays: 'dedup_window_days',
   pingTtlSeconds: 'ping_ttl_seconds',
   timezone: 'timezone',
+  defaultPhoneRegion: 'default_phone_region',
 } as const;
 
 export interface PlatformSettings {
@@ -18,6 +19,8 @@ export interface PlatformSettings {
   dedupWindowDays: number;
   pingTtlSeconds: number;
   timezone: string;
+  /** ISO 3166-1 alpha-2 region used to read phone numbers in national format. */
+  defaultPhoneRegion: string;
 }
 
 export const DEFAULT_SETTINGS: PlatformSettings = {
@@ -25,6 +28,7 @@ export const DEFAULT_SETTINGS: PlatformSettings = {
   dedupWindowDays: 30,
   pingTtlSeconds: 300, // 5 minutes
   timezone: 'UTC',
+  defaultPhoneRegion: 'US',
 };
 
 function toInt(value: string | undefined, fallback: number): number {
@@ -48,6 +52,9 @@ export async function getSettings(): Promise<PlatformSettings> {
       toInt(map.get(SETTING_KEYS.pingTtlSeconds), DEFAULT_SETTINGS.pingTtlSeconds)
     ),
     timezone: map.get(SETTING_KEYS.timezone) || DEFAULT_SETTINGS.timezone,
+    defaultPhoneRegion: (
+      map.get(SETTING_KEYS.defaultPhoneRegion) || DEFAULT_SETTINGS.defaultPhoneRegion
+    ).toUpperCase(),
   };
 }
 
@@ -67,6 +74,10 @@ export async function updateSettings(patch: Partial<PlatformSettings>): Promise<
   if (patch.pingTtlSeconds !== undefined)
     writes.push(setSetting(SETTING_KEYS.pingTtlSeconds, String(patch.pingTtlSeconds)));
   if (patch.timezone) writes.push(setSetting(SETTING_KEYS.timezone, patch.timezone));
+  if (patch.defaultPhoneRegion)
+    writes.push(
+      setSetting(SETTING_KEYS.defaultPhoneRegion, patch.defaultPhoneRegion.toUpperCase())
+    );
   await Promise.all(writes);
   return getSettings();
 }

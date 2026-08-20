@@ -55,6 +55,7 @@ export function SettingsPage() {
   const [dedupWindowDays, setDedupWindowDays] = React.useState('');
   const [pingTtlSeconds, setPingTtlSeconds] = React.useState('');
   const [timezone, setTimezone] = React.useState('');
+  const [phoneRegion, setPhoneRegion] = React.useState('');
 
   // Seed the local fields once the server values land.
   React.useEffect(() => {
@@ -62,6 +63,7 @@ export function SettingsPage() {
     setDedupWindowDays(String(settings.data.dedupWindowDays));
     setPingTtlSeconds(String(settings.data.pingTtlSeconds));
     setTimezone(settings.data.timezone);
+    setPhoneRegion(settings.data.defaultPhoneRegion);
   }, [settings.data]);
 
   const save = useMutation({
@@ -94,7 +96,8 @@ export function SettingsPage() {
   const dirty =
     String(current.dedupWindowDays) !== dedupWindowDays ||
     String(current.pingTtlSeconds) !== pingTtlSeconds ||
-    current.timezone !== timezone;
+    current.timezone !== timezone ||
+    current.defaultPhoneRegion !== phoneRegion;
 
   return (
     <div className="max-w-3xl">
@@ -165,7 +168,7 @@ export function SettingsPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <div className="space-y-1.5">
                 <Label htmlFor="dedup">Dedup window (days)</Label>
                 <Input
@@ -225,6 +228,28 @@ export function SettingsPage() {
                   Used for dayparting and for "today" in caps and reports.
                 </p>
               </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="region">Phone region</Label>
+                <Select value={phoneRegion} onValueChange={setPhoneRegion}>
+                  <SelectTrigger id="region">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {['US', 'CA', 'GB', 'IE', 'AU', 'NZ', 'DE', 'FR', 'ES', 'IT', 'NL', 'MX', 'BR', 'IN', 'ZA'].map(
+                      (r) => (
+                        <SelectItem key={r} value={r}>
+                          {r}
+                        </SelectItem>
+                      )
+                    )}
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] text-muted-foreground">
+                  How to read phone numbers written without a country code. Numbers sent in
+                  +E.164 form are understood either way.
+                </p>
+              </div>
             </div>
 
             <Button
@@ -234,6 +259,7 @@ export function SettingsPage() {
                   dedupWindowDays: Number(dedupWindowDays),
                   pingTtlSeconds: Number(pingTtlSeconds),
                   timezone,
+                  defaultPhoneRegion: phoneRegion,
                 })
               }
             >

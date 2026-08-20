@@ -1,0 +1,23 @@
+# Automatic HTTPS for the dashboard and the public lead API.
+{$APP_DOMAIN} {
+	encode gzip
+
+	# Sources post leads here; buyers never call in, they only receive webhooks.
+	reverse_proxy app:4000
+
+	# The API sets `trust proxy`, so it reads the real client IP from these
+	# headers for rate limiting. Caddy sets them by default; stated here so the
+	# dependency is obvious if you swap Caddy for something else.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

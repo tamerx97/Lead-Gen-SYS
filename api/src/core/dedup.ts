@@ -1,16 +1,49 @@
 import { createHash } from 'node:crypto';
 
+import { parsePhoneNumberFromString, type CountryCode } from 'libphonenumber-js';
+
+/** Region used to interpret phone numbers written in national format. */
+export const DEFAULT_PHONE_REGION = 'US';
+
+/** Shorter than this and we refuse to treat the value as an identity at all. */
+const MIN_NATIONAL_DIGITS = 7;
+
 /**
- * Normalise a phone number to its significant digits so that
- * "(555) 010-1234", "555-010-1234" and "+1 555 010 1234" all hash alike.
+ * Normalise a phone number to its E.164 digits so that every way of writing the
+ * same number hashes alike.
+ *
+ * `defaultRegion` only matters for numbers written in *national* format
+ * ("020 7946 0958"); anything already in international format ("+44 …") is
+ * understood regardless of the setting.
+ *
+ * Note we deliberately accept a number that parses but fails `isValid()`.
+ * Reserved test ranges (555-01xx in the US) are invalid by definition, and
+ * refusing them would make the system undeduplicatable in staging while
+ * silently changing behaviour in production.
  */
-export function normalizePhone(raw: unknown): string | null {
+export function normalizePhone(
+  raw: unknown,
+  defaultRegion: string = DEFAULT_PHONE_REGION
+): string | null {
   if (raw === null || raw === undefined) return null;
-  let digits = String(raw).replace(/\D+/g, '');
+  const value = String(raw).trim();
+  if (!value) return null;
+
+  const parsed = parsePhoneNumberFromString(value, defaultRegion as CountryCode);
+  // libphonenumber will happily turn "12345" into "+112345". Require a
+  // plausible national number so short junk doesn't become a hashable identity
+  // that could collide two unrelated leads.
+  if (parsed?.number && parsed.nationalNumber.length >= MIN_NATIONAL_DIGITS) {
+    return parsed.number.replace(/^\+/, '');
+  }
+
+  // Unparseable (wrong length, junk region, extensions we don't understand):
+  // fall back to a digits-only form so two identical malformed strings still
+  // collide rather than every one of them becoming a fresh "unique" lead.
+  let digits = value.replace(/\D+/g, '');
   if (!digits) return null;
-  // Strip a NANP country code so domestic and E.164 forms collide.
   if (digits.length === 11 && digits.startsWith('1')) digits = digits.slice(1);
-  if (digits.length < 7) return null;
+  if (digits.length < MIN_NATIONAL_DIGITS) return null;
   return digits;
 }
 
@@ -25,8 +58,11 @@ export function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
-export function hashPhone(raw: unknown): string | null {
-  const normalized = normalizePhone(raw);
+export function hashPhone(
+  raw: unknown,
+  defaultRegion: string = DEFAULT_PHONE_REGION
+): string | null {
+  const normalized = normalizePhone(raw, defaultRegion);
   return normalized ? sha256(`phone:${normalized}`) : null;
 }
 

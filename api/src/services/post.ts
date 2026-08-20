@@ -128,7 +128,8 @@ export async function handlePost(source: Source, body: PostRequest): Promise<Pos
   }
 
   const phoneHash = hashPhone(
-    leadInput.phone ?? leadInput.phone_number ?? (leadInput as Record<string, unknown>).mobile
+    leadInput.phone ?? leadInput.phone_number ?? (leadInput as Record<string, unknown>).mobile,
+    settings.defaultPhoneRegion
   );
   const emailHash = hashEmail(leadInput.email ?? leadInput.email_address);
 

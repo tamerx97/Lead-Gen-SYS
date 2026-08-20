@@ -32,6 +32,7 @@ async function main(): Promise<void> {
     [SETTING_KEYS.dedupWindowDays, String(DEFAULT_SETTINGS.dedupWindowDays)],
     [SETTING_KEYS.pingTtlSeconds, String(DEFAULT_SETTINGS.pingTtlSeconds)],
     [SETTING_KEYS.timezone, DEFAULT_SETTINGS.timezone],
+    [SETTING_KEYS.defaultPhoneRegion, DEFAULT_SETTINGS.defaultPhoneRegion],
   ];
   for (const [key, value] of settings) {
     await prisma.setting.upsert({ where: { key }, create: { key, value }, update: {} });

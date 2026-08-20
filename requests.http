@@ -323,11 +323,18 @@ Content-Type: application/json
 
 { "routingStrategy": "bid" }
 
-### Dedup window and ping TTL
+### Dedup window, ping TTL, timezone, phone region
+# `defaultPhoneRegion` decides how phone numbers written WITHOUT a country code
+# are read. Numbers sent as +E.164 are understood regardless.
 PATCH {{host}}/api/settings
 Content-Type: application/json
 
-{ "dedupWindowDays": 30, "pingTtlSeconds": 300, "timezone": "America/Los_Angeles" }
+{
+  "dedupWindowDays": 30,
+  "pingTtlSeconds": 300,
+  "timezone": "America/Los_Angeles",
+  "defaultPhoneRegion": "US"
+}
 
 ### Sign out
 POST {{host}}/api/auth/logout

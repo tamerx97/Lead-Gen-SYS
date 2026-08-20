@@ -22,6 +22,9 @@ const envSchema = z.object({
   SEED_ADMIN_EMAIL: z.string().default('admin@leadgen.local'),
   SEED_ADMIN_PASSWORD: z.string().default('admin12345'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+  // Optional: absolute or relative path to the built dashboard (web/dist).
+  // When set, the API also serves the SPA, so a deployment is a single process.
+  SERVE_WEB_DIR: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -38,6 +41,33 @@ export const env = {
   corsOrigins: parsed.data.CORS_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean),
 };
 
-if (env.isProduction && env.JWT_SECRET === 'dev-only-insecure-secret-change-me') {
-  throw new Error('JWT_SECRET must be set to a real secret when NODE_ENV=production');
+/**
+ * Secrets that are published in this repository, so anyone could forge a
+ * session cookie with them. Catching only the code default is not enough: the
+ * likeliest mistake is copying .env.example straight into production.
+ */
+const PUBLISHED_SECRETS = new Set([
+  'dev-only-insecure-secret-change-me',
+  'change-me-to-a-long-random-string',
+  'changeme',
+  'secret',
+]);
+
+const MIN_PRODUCTION_SECRET_LENGTH = 32;
+
+if (env.isProduction) {
+  const secret = env.JWT_SECRET.trim();
+  if (PUBLISHED_SECRETS.has(secret)) {
+    throw new Error(
+      'JWT_SECRET is still set to a placeholder that is published in this repository.\n' +
+        'Anyone could forge an admin session with it. Generate a real one:\n' +
+        '  openssl rand -base64 48'
+    );
+  }
+  if (secret.length < MIN_PRODUCTION_SECRET_LENGTH) {
+    throw new Error(
+      `JWT_SECRET must be at least ${MIN_PRODUCTION_SECRET_LENGTH} characters when NODE_ENV=production ` +
+        `(got ${secret.length}). Generate one with: openssl rand -base64 48`
+    );
+  }
 }

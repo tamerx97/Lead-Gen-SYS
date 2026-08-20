@@ -26,6 +26,7 @@ in the dashboard. There is no industry name anywhere in the engine.
 - [Deduplication](#deduplication)
 - [The dashboard](#the-dashboard)
 - [Tests](#tests)
+- [Deploying](#deploying)
 - [Self-hosting and production notes](#self-hosting-and-production-notes)
 - [Project layout](#project-layout)
 
@@ -311,7 +312,7 @@ post no longer wins.
 | `GET` | `/api/leads` (+ `POST /:id/redeliver`) | Sold-lead log, filterable |
 | `GET` | `/api/pings` | Auction log |
 | `GET` | `/api/stats`, `/stats/timeseries`, `/stats/rollup?by=…` | Reporting |
-| `GET PATCH` | `/api/settings` | Routing strategy, dedup window, ping TTL, timezone |
+| `GET PATCH` | `/api/settings` | Routing strategy, dedup window, ping TTL, timezone, phone region |
 | `GET` | `/health` | Liveness + database check |
 
 Full worked examples for both seed verticals — plus creating a vertical, running
@@ -452,13 +453,18 @@ Remove the mount in `api/src/app.ts` if you'd rather it never exist.
 
 On post, the phone and email are normalised and hashed with SHA-256:
 
-- **Phone** → digits only, with a leading NANP `1` stripped from 11-digit
-  values, so `(555) 010-1234`, `555-010-1234`, `+1 555 010 1234` and
-  `15550101234` all collide. Note this rule is NANP-oriented: other country
-  codes are not stripped, so `+44 20 …` and `020 …` hash differently. If you
-  operate outside North America, normalise to E.164 before posting, or adjust
-  `normalizePhone` in `api/src/core/dedup.ts` — it is a pure function with its
-  own unit tests.
+- **Phone** → parsed to **E.164** with `libphonenumber-js`, so `(555) 010-1234`,
+  `555-010-1234`, `+1 555 010 1234` and `15550101234` all collide. Numbers
+  written in *national* format are read using the **Phone region** setting
+  (Settings → Phone region, default `US`), so with `GB` selected
+  `020 7946 0958` and `+44 20 7946 0958` are the same lead. A number sent in
+  `+E.164` form is understood regardless of that setting.
+
+  Two deliberate choices: a number that parses but fails a strict validity
+  check is still normalised (reserved test ranges like `555-01xx` are "invalid"
+  by definition, and rejecting them would silently disable dedup in staging),
+  and anything with fewer than 7 national digits is refused outright rather
+  than hashed, so short junk can't collide two unrelated leads.
 - **Email** → trimmed and lowercased.
 
 A lead is rejected as `rejected_dup` if either hash matches a prior sale **in the
@@ -483,7 +489,7 @@ Only the hashes are indexed and compared — `Lead(verticalId, phoneHash, emailH
 | **Leads** | Searchable, paginated log; expand a row for the full payload and the buyer's delivery response; retry failed deliveries. |
 | **Pings** | Every auction, with matched counts, best bid, and the full offers/rejections. |
 | **Playground** | The ping → post tester. Forms render from the selected vertical's schema; shows ranked offers, per-campaign rejection reasons, the award and the delivery result. |
-| **Settings** | Routing strategy, dedup window, ping TTL, platform timezone. |
+| **Settings** | Routing strategy, dedup window, ping TTL, platform timezone, phone region. |
 
 The Playground calls the **public** API with an `X-Api-Key`, exactly as an
 external source would — it is not a privileged shortcut, so what you see there
@@ -519,6 +525,29 @@ creates and tears down its own fixtures and does not touch seed data.
 
 ---
 
+## Deploying
+
+Full instructions are in **[DEPLOY.md](./DEPLOY.md)**. The short version — one
+VPS, automatic HTTPS, one container serving both the API and the dashboard:
+
+```bash
+cp .env.production.example .env
+nano .env                      # APP_DOMAIN, POSTGRES_PASSWORD, JWT_SECRET
+docker compose -f docker-compose.prod.yml up -d --build
+
+# create your first admin (production does not use the dev seed)
+docker compose -f docker-compose.prod.yml exec app \
+  node api/dist/src/scripts/createAdmin.js you@example.com 'a-long-passphrase'
+```
+
+Caddy provisions the TLS certificate for `APP_DOMAIN` on its own and migrations
+run on boot. DEPLOY.md also covers running without Docker (systemd), split
+web/API tiers, managed Postgres, PaaS (Render/Railway/Fly), backups, upgrades,
+scaling and monitoring.
+
+Because the API serves the dashboard in this mode, there is one origin and one
+port — no CORS configuration and no separate web server.
+
 ## Self-hosting and production notes
 
 ### Everything is yours
@@ -528,11 +557,15 @@ traffic is the webhooks you configure. Run it on a laptop, a VPS, or a cluster.
 
 ### Before you expose it
 
-1. **Rotate the seed credentials.** The seeded API keys and admin password are
-   fixed values committed to this repo. Rotate each source key (Sources →
-   Rotate key) and change the admin password (`POST /api/auth/password`).
-2. **Set a real `JWT_SECRET`.** The API refuses to boot in production with the
-   development default. Use 32+ random bytes.
+1. **Don't ship the seed data.** The seeded API keys and admin password are
+   fixed values committed to this repo. A production deployment should start
+   empty and create its admin with
+   `node api/dist/src/scripts/createAdmin.js <email> <password>`. If you did
+   seed, rotate every source key (Sources → Rotate key) and change the admin
+   password (`POST /api/auth/password`).
+2. **Set a real `JWT_SECRET`.** In production the API refuses to boot if the
+   secret is a placeholder published in this repo or is shorter than 32
+   characters. Generate one with `openssl rand -base64 48`.
 3. **Set `COOKIE_SECURE=true`** and terminate TLS in front of the API.
 4. **Set `CORS_ORIGIN`** to your dashboard's real origin. It defaults to
    `http://localhost:5173`.
@@ -544,11 +577,13 @@ traffic is the webhooks you configure. Run it on a laptop, a VPS, or a cluster.
 
 ```bash
 npm run build                                  # both workspaces
-node api/dist/src/index.js                     # API (serve web/dist statically)
+SERVE_WEB_DIR=./web/dist node api/dist/src/index.js
 ```
 
-Serve `web/dist` from any static host or reverse proxy, and proxy `/api` and
-`/health` to the API process.
+With `SERVE_WEB_DIR` set, the API serves the built dashboard itself (with SPA
+fallback and correct cache headers), so the whole product is one process on one
+port. Leave it unset to run the API alone and serve `web/dist` from any static
+host or reverse proxy, proxying `/api` and `/health` to the API.
 
 ### Auth model
 
@@ -614,6 +649,10 @@ it works directly as a load-balancer and container health check.
 ```
 .
 ├── docker-compose.yml          Postgres for local development
+├── docker-compose.prod.yml     Production: Postgres + app + Caddy (auto-TLS)
+├── Dockerfile                  Single container: API + dashboard in one process
+├── Caddyfile                   TLS termination and security headers
+├── DEPLOY.md                   Deployment guide (Docker, systemd, PaaS, backups)
 ├── requests.http               Worked examples for both seed verticals
 ├── package.json                Workspace root; dev/setup/test scripts
 │
@@ -638,6 +677,7 @@ it works directly as a load-balancer and container health check.
 │       │   ├── caps.ts             daily / monthly / concurrent counters
 │       │   └── time.ts             timezone-aware period boundaries
 │       ├── routes/             HTTP surface (public, auth, management, mock)
+│       ├── scripts/            createAdmin.js — bootstrap a production login
 │       ├── middleware/         auth, rate limiting, request logging
 │       └── tests/              6 unit suites + 1 integration suite
 │
