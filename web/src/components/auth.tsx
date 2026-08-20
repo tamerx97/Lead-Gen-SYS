@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, ApiError } from '@/lib/api';
+import { api, ApiError, UNAUTHORIZED_EVENT } from '@/lib/api';
 
 interface Admin {
   id: string;
@@ -34,6 +34,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     staleTime: 60_000,
   });
 
+  // If the session dies while the dashboard is open — it expired, or another
+  // tab signed out — drop straight back to the login screen rather than leaving
+  // a shell up whose every request fails.
+  React.useEffect(() => {
+    function onUnauthorized() {
+      if (queryClient.getQueryData(['me']) !== null) {
+        queryClient.setQueryData(['me'], null);
+      }
+    }
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+  }, [queryClient]);
+
   const value = React.useMemo<AuthValue>(
     () => ({
       admin: data ?? null,
@@ -44,8 +57,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       },
       logout: async () => {
         await api.post('/api/auth/logout');
-        queryClient.clear();
-        await queryClient.invalidateQueries({ queryKey: ['me'] });
+
+        // Record that we are signed out *first*. This flips `admin` to null,
+        // which unmounts the dashboard and sends the user to the login screen.
+        queryClient.setQueryData(['me'], null);
+
+        // Then drop every other page's cached data so the next sign-in starts
+        // clean. Deliberately NOT queryClient.clear(): that destroys the query
+        // object this provider's useQuery is bound to, after which the observer
+        // keeps reporting the old signed-in value and any later write lands on
+        // a new entry nobody is watching — which left the user stuck on a dead
+        // dashboard whose every request 401'd.
+        queryClient.removeQueries({
+          predicate: (query) => query.queryKey[0] !== 'me',
+        });
       },
     }),
     [data, isLoading, queryClient]
