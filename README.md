@@ -12,6 +12,10 @@ in the dashboard. There is no industry name anywhere in the engine.
 
 ---
 
+> **Just want it running?** Read **[START-HERE.md](./START-HERE.md)** instead —
+> a plain-language walkthrough that gets you online in about 20 minutes with no
+> technical knowledge. Everything below is the technical reference.
+
 ## Table of contents
 
 - [What it does](#what-it-does)
@@ -650,6 +654,8 @@ it works directly as a load-balancer and container health check.
 
 ```
 .
+├── START-HERE.md               Plain-language setup guide (start here)
+├── install.sh                  One-command installer for a fresh server
 ├── docker-compose.yml          Postgres for local development
 ├── docker-compose.prod.yml     Production: Postgres + app + Caddy (auto-TLS)
 ├── Dockerfile                  Single container: API + dashboard in one process
