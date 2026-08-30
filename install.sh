@@ -10,6 +10,9 @@
 set -euo pipefail
 
 REPO_URL="${REPO_URL:-https://github.com/tamerx97/Lead-Gen-SYS.git}"
+# Which version to install. Defaults to the latest released code; set REPO_REF to
+# pin a specific tag or commit, which is also how CI installs the branch under test.
+REPO_REF="${REPO_REF:-main}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/leadgen}"
 COMPOSE_FILE="docker-compose.prod.yml"
 
@@ -78,8 +81,8 @@ docker info >/dev/null 2>&1 || die "Docker is installed but not running. Start i
 step "Getting the software"
 if [ -d "$INSTALL_DIR/.git" ]; then
   say "Already installed at $INSTALL_DIR — updating to the latest version."
-  git -C "$INSTALL_DIR" fetch --quiet origin main
-  git -C "$INSTALL_DIR" reset --hard --quiet origin/main
+  git -C "$INSTALL_DIR" fetch --quiet origin "$REPO_REF"
+  git -C "$INSTALL_DIR" reset --hard --quiet FETCH_HEAD
 else
   command -v git >/dev/null 2>&1 || {
     (apt-get update -qq && apt-get install -y -qq git) >/dev/null 2>&1 \
@@ -87,8 +90,10 @@ else
       || die "git is required but could not be installed automatically."
   }
   rm -rf "$INSTALL_DIR"
-  git clone --quiet --depth 1 "$REPO_URL" "$INSTALL_DIR" \
+  git clone --quiet --depth 1 --branch "$REPO_REF" "$REPO_URL" "$INSTALL_DIR" 2>/dev/null \
+    || git clone --quiet "$REPO_URL" "$INSTALL_DIR" \
     || die "Could not download the software from $REPO_URL"
+  git -C "$INSTALL_DIR" checkout --quiet "$REPO_REF" 2>/dev/null || true
 fi
 cd "$INSTALL_DIR"
 

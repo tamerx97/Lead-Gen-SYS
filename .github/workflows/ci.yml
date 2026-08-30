@@ -154,3 +154,88 @@ jobs:
           docker compose config > /dev/null
           docker compose -f docker-compose.prod.yml config > /dev/null
           echo "compose files valid"
+
+  installer:
+    name: install.sh works on a clean machine
+    runs-on: ubuntu-latest
+    # This is the exact path a real operator takes, so it is worth running for
+    # real rather than reasoning about. The runner is a clean Ubuntu box with
+    # Docker present, which is what the script targets.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run the installer end to end
+        run: |
+          set -euo pipefail
+
+          # No domain, so the script takes its plain-HTTP fallback and serves on
+          # the machine's IP — the same path someone gets before they own a domain.
+          sudo REPO_URL="${{ github.server_url }}/${{ github.repository }}.git" \
+               REPO_REF="${{ github.event.pull_request.head.sha || github.sha }}" \
+               bash install.sh "" "ci@example.com" 2>&1 | tee /tmp/install.log
+
+          # The installer must not report success on a failure.
+          grep -q "YOUR LEAD SYSTEM IS LIVE" /tmp/install.log
+
+      - name: The printed credentials must actually work
+        run: |
+          set -euo pipefail
+
+          # Take the password out of the installer's own output, the way a user
+          # reads it off their screen.
+          PASSWORD="$(grep -oP 'Password:\s+\K[A-Za-z0-9]+' /tmp/install.log | head -1)"
+          test -n "$PASSWORD" || { echo "::error::installer printed no password"; exit 1; }
+          echo "installer printed a ${#PASSWORD}-character password"
+
+          echo "--- the site is reachable on port 80 ---"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost/)" = "200"
+
+          echo "--- health check passes through the proxy ---"
+          curl -fsS http://localhost/health
+
+          echo "--- those credentials sign in ---"
+          curl -fsS -X POST http://localhost/api/auth/login \
+            -H 'Content-Type: application/json' \
+            -d "{\"email\":\"ci@example.com\",\"password\":\"$PASSWORD\"}" \
+            | grep -q 'ci@example.com'
+
+          echo "--- and the system starts EMPTY, with none of the dev seed data ---"
+          COOKIE=/tmp/cookie.txt
+          curl -fsS -c "$COOKIE" -X POST http://localhost/api/auth/login \
+            -H 'Content-Type: application/json' \
+            -d "{\"email\":\"ci@example.com\",\"password\":\"$PASSWORD\"}" > /dev/null
+          VERTICALS="$(curl -fsS -b "$COOKIE" http://localhost/api/verticals)"
+          test "$VERTICALS" = "[]" || {
+            echo "::error::a fresh install must have no verticals, got: $VERTICALS"; exit 1; }
+          SOURCES="$(curl -fsS -b "$COOKIE" http://localhost/api/sources)"
+          test "$SOURCES" = "[]" || {
+            echo "::error::a fresh install must ship no API keys, got: $SOURCES"; exit 1; }
+
+          echo "INSTALLER VERIFIED"
+
+      - name: Re-running the installer must be safe
+        run: |
+          set -euo pipefail
+          PASSWORD="$(grep -oP 'Password:\s+\K[A-Za-z0-9]+' /tmp/install.log | head -1)"
+
+          sudo REPO_URL="${{ github.server_url }}/${{ github.repository }}.git" \
+               REPO_REF="${{ github.event.pull_request.head.sha || github.sha }}" \
+               bash install.sh "" "ci@example.com" 2>&1 | tee /tmp/install2.log
+
+          echo "--- it must keep the existing password, not silently reset it ---"
+          grep -q "unchanged from your previous install" /tmp/install2.log
+
+          echo "--- and the original password still works afterwards ---"
+          curl -fsS -X POST http://localhost/api/auth/login \
+            -H 'Content-Type: application/json' \
+            -d "{\"email\":\"ci@example.com\",\"password\":\"$PASSWORD\"}" \
+            | grep -q 'ci@example.com'
+
+          echo "RE-RUN VERIFIED"
+
+      - name: Logs (on failure)
+        if: failure()
+        run: |
+          sudo cat /tmp/install.log || true
+          cd /opt/leadgen && sudo docker compose -f docker-compose.prod.yml logs --tail 60 || true
