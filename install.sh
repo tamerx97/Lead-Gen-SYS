@@ -10,10 +10,20 @@
 set -euo pipefail
 
 REPO_URL="${REPO_URL:-https://github.com/tamerx97/Lead-Gen-SYS.git}"
+# Which version to install. Defaults to the latest released code; set REPO_REF to
+# pin a specific tag or commit, which is also how CI installs the branch under test.
+REPO_REF="${REPO_REF:-main}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/leadgen}"
 COMPOSE_FILE="docker-compose.prod.yml"
 
-bold=$'\033[1m'; green=$'\033[32m'; yellow=$'\033[33m'; red=$'\033[31m'; dim=$'\033[2m'; reset=$'\033[0m'
+# Colour only when writing to a real terminal. Piping the output to a log file
+# — which people do, precisely to keep the printed password — must produce clean
+# text, not escape codes wrapped around the password.
+if [ -t 1 ]; then
+  bold=$'\033[1m'; green=$'\033[32m'; yellow=$'\033[33m'; red=$'\033[31m'; dim=$'\033[2m'; reset=$'\033[0m'
+else
+  bold=''; green=''; yellow=''; red=''; dim=''; reset=''
+fi
 
 say()  { printf '%s\n' "$*"; }
 step() { printf '\n%s==>%s %s%s\n' "$green" "$reset" "$bold" "$*$reset"; }
@@ -78,8 +88,8 @@ docker info >/dev/null 2>&1 || die "Docker is installed but not running. Start i
 step "Getting the software"
 if [ -d "$INSTALL_DIR/.git" ]; then
   say "Already installed at $INSTALL_DIR — updating to the latest version."
-  git -C "$INSTALL_DIR" fetch --quiet origin main
-  git -C "$INSTALL_DIR" reset --hard --quiet origin/main
+  git -C "$INSTALL_DIR" fetch --quiet origin "$REPO_REF"
+  git -C "$INSTALL_DIR" reset --hard --quiet FETCH_HEAD
 else
   command -v git >/dev/null 2>&1 || {
     (apt-get update -qq && apt-get install -y -qq git) >/dev/null 2>&1 \
@@ -87,8 +97,10 @@ else
       || die "git is required but could not be installed automatically."
   }
   rm -rf "$INSTALL_DIR"
-  git clone --quiet --depth 1 "$REPO_URL" "$INSTALL_DIR" \
+  git clone --quiet --depth 1 --branch "$REPO_REF" "$REPO_URL" "$INSTALL_DIR" 2>/dev/null \
+    || git clone --quiet "$REPO_URL" "$INSTALL_DIR" \
     || die "Could not download the software from $REPO_URL"
+  git -C "$INSTALL_DIR" checkout --quiet "$REPO_REF" 2>/dev/null || true
 fi
 cd "$INSTALL_DIR"
 
