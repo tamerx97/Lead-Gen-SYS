@@ -16,7 +16,14 @@ REPO_REF="${REPO_REF:-main}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/leadgen}"
 COMPOSE_FILE="docker-compose.prod.yml"
 
-bold=$'\033[1m'; green=$'\033[32m'; yellow=$'\033[33m'; red=$'\033[31m'; dim=$'\033[2m'; reset=$'\033[0m'
+# Colour only when writing to a real terminal. Piping the output to a log file
+# — which people do, precisely to keep the printed password — must produce clean
+# text, not escape codes wrapped around the password.
+if [ -t 1 ]; then
+  bold=$'\033[1m'; green=$'\033[32m'; yellow=$'\033[33m'; red=$'\033[31m'; dim=$'\033[2m'; reset=$'\033[0m'
+else
+  bold=''; green=''; yellow=''; red=''; dim=''; reset=''
+fi
 
 say()  { printf '%s\n' "$*"; }
 step() { printf '\n%s==>%s %s%s\n' "$green" "$reset" "$bold" "$*$reset"; }

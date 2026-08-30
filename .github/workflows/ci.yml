@@ -176,7 +176,12 @@ jobs:
                bash install.sh "" "ci@example.com" 2>&1 | tee /tmp/install.log
 
           # The installer must not report success on a failure.
-          grep -q "YOUR LEAD SYSTEM IS LIVE" /tmp/install.log
+          sed -r 's/\x1B\[[0-9;]*[mK]//g' /tmp/install.log | grep -q "YOUR LEAD SYSTEM IS LIVE"
+
+          # The password must be readable from piped output — someone saving the
+          # installer's output to a file has to be able to read their password.
+          sed -r 's/\x1B\[[0-9;]*[mK]//g' /tmp/install.log \
+            | grep -qP 'Password:\s+[A-Za-z0-9]{12,}'
 
       - name: The printed credentials must actually work
         run: |
@@ -184,7 +189,8 @@ jobs:
 
           # Take the password out of the installer's own output, the way a user
           # reads it off their screen.
-          PASSWORD="$(grep -oP 'Password:\s+\K[A-Za-z0-9]+' /tmp/install.log | head -1)"
+          PASSWORD="$(sed -r 's/\x1B\[[0-9;]*[mK]//g' /tmp/install.log \
+                      | grep -oP 'Password:\s+\K[A-Za-z0-9]+' | head -1)"
           test -n "$PASSWORD" || { echo "::error::installer printed no password"; exit 1; }
           echo "installer printed a ${#PASSWORD}-character password"
 
@@ -217,14 +223,16 @@ jobs:
       - name: Re-running the installer must be safe
         run: |
           set -euo pipefail
-          PASSWORD="$(grep -oP 'Password:\s+\K[A-Za-z0-9]+' /tmp/install.log | head -1)"
+          PASSWORD="$(sed -r 's/\x1B\[[0-9;]*[mK]//g' /tmp/install.log \
+                      | grep -oP 'Password:\s+\K[A-Za-z0-9]+' | head -1)"
 
           sudo REPO_URL="${{ github.server_url }}/${{ github.repository }}.git" \
                REPO_REF="${{ github.event.pull_request.head.sha || github.sha }}" \
                bash install.sh "" "ci@example.com" 2>&1 | tee /tmp/install2.log
 
           echo "--- it must keep the existing password, not silently reset it ---"
-          grep -q "unchanged from your previous install" /tmp/install2.log
+          sed -r 's/\x1B\[[0-9;]*[mK]//g' /tmp/install2.log \
+            | grep -q "unchanged from your previous install"
 
           echo "--- and the original password still works afterwards ---"
           curl -fsS -X POST http://localhost/api/auth/login \
