@@ -242,8 +242,43 @@ jobs:
 
           echo "RE-RUN VERIFIED"
 
+      - name: A blocked web port must stop the install with a clear message
+        run: |
+          set -euo pipefail
+
+          # Managed VPS images often ship a control panel or web server already
+          # bound to :80. The installer must say so in plain words rather than
+          # fail with a Docker error — and this check silently stopped working
+          # once, so it is asserted here rather than trusted.
+          cd /opt/leadgen
+          sudo docker compose -f docker-compose.prod.yml down >/dev/null 2>&1
+
+          sudo python3 -c "
+          import socket, time
+          s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+          s.bind(('0.0.0.0', 80)); s.listen(5); time.sleep(120)
+          " &
+          sleep 3
+
+          set +e
+          sudo REPO_URL="${{ github.server_url }}/${{ github.repository }}.git" \
+               REPO_REF="${{ github.event.pull_request.head.sha || github.sha }}" \
+               bash "$GITHUB_WORKSPACE/install.sh" "" "ci@example.com" > /tmp/blocked.log 2>&1
+          RC=$?
+          set -e
+
+          test "$RC" -ne 0 || { echo "::error::installer continued despite a blocked port"; exit 1; }
+          grep -q "Something is already using the web port" /tmp/blocked.log \
+            || { echo "::error::no explanation shown"; cat /tmp/blocked.log; exit 1; }
+          grep -q "control panel" /tmp/blocked.log \
+            || { echo "::error::no guidance on how to fix it"; exit 1; }
+
+          echo "BLOCKED PORT HANDLED CLEANLY"
+          sudo pkill -f "0.0.0.0', 80" || true
+
       - name: Logs (on failure)
         if: failure()
         run: |
           sudo cat /tmp/install.log || true
+          sudo cat /tmp/blocked.log || true
           cd /opt/leadgen && sudo docker compose -f docker-compose.prod.yml logs --tail 60 || true

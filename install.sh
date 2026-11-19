@@ -35,6 +35,14 @@ die()  { printf '\n%sX  %s%s\n\n' "$red" "$*" "$reset" >&2; exit 1; }
 
 command -v curl >/dev/null 2>&1 || die "curl is required but not installed."
 
+# Building the app needs roughly 2 GB. Less than that usually dies mid-build with
+# a confusing error, so say so now rather than ten minutes from now.
+MEM_MB="$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0)"
+if [ "$MEM_MB" -gt 0 ] && [ "$MEM_MB" -lt 1800 ]; then
+  warn "This server has about ${MEM_MB} MB of memory. 2 GB or more is recommended."
+  warn "The build may run out of memory. If it fails, resize the server and re-run this."
+fi
+
 # ------------------------------------------------------------------ inputs
 # Accept answers as arguments or environment variables so the script can also
 # run unattended:  sudo bash install.sh leads.example.com you@example.com
@@ -83,6 +91,83 @@ docker compose version >/dev/null 2>&1 \
 
 systemctl start docker >/dev/null 2>&1 || true
 docker info >/dev/null 2>&1 || die "Docker is installed but not running. Start it with: systemctl start docker"
+
+# Something already serving on 80/443 — a control panel or web server that came
+# with the server image is the usual cause on managed VPS providers. Docker would
+# fail with "port is already allocated", which tells a non-technical operator
+# nothing, so name the culprit and the fix instead.
+# Is anything already listening on this port? Done by actually connecting, so it
+# does not depend on `ss`/`netstat` being installed — on a minimal server image
+# they may not be, and a check that silently finds nothing is worse than none.
+port_busy() {
+  local port="$1"
+  # Written as an `if` rather than an `&&` chain: a failed connection is then a
+  # tested condition, which the script's strict error mode tolerates. As an
+  # `&&` chain the failure aborted the whole installer silently.
+  if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
+# Best effort at naming the program holding a port, purely to make the message
+# more useful. Empty is fine — the decision never depends on this.
+port_holder() {
+  local port="$1" name=""
+  if command -v ss >/dev/null 2>&1; then
+    name="$(ss -ltnp "sport = :$port" 2>/dev/null | grep -oP 'users:\(\("\K[^"]+' | head -1)"
+  fi
+  if [ -z "$name" ] && command -v fuser >/dev/null 2>&1; then
+    local pid; pid="$(fuser "$port/tcp" 2>/dev/null | tr -d ' ' | head -1)"
+    [ -n "$pid" ] && name="$(ps -p "$pid" -o comm= 2>/dev/null)"
+  fi
+  if [ -z "$name" ] && command -v netstat >/dev/null 2>&1; then
+    name="$(netstat -ltnp 2>/dev/null | awk -v p=":$port\$" '$4 ~ p {print $7}' | cut -d/ -f2 | head -1)"
+  fi
+  printf '%s' "$name"
+}
+
+# Something already serving on 80/443 — a control panel or web server that came
+# with the server image is the usual cause on a managed VPS. Docker would fail
+# with "port is already allocated", which tells a non-technical operator
+# nothing, so name the culprit and the fix instead.
+check_web_ports() {
+  # Our own stack already holding the ports is fine — that is just a re-run.
+  if docker compose -f "$COMPOSE_FILE" ps --status running 2>/dev/null | grep -q caddy; then
+    return 0
+  fi
+
+  local busy="" holder=""
+  for port in 80 443; do
+    if port_busy "$port"; then
+      holder="$(port_holder "$port")"
+      busy="$busy $port${holder:+ ($holder)}"
+    fi
+  done
+  [ -n "$busy" ] || return 0
+
+  printf '\n%sX  Something is already using the web port(s):%s%s\n\n' "$red" "$busy" "$reset" >&2
+  cat >&2 <<'PORTHELP'
+  Your lead system needs ports 80 and 443 to serve the dashboard, but another
+  program is holding them. On a VPS this is almost always a web server or
+  control panel that came pre-installed with the server image.
+
+  You have two options:
+
+  1. Use a server image WITHOUT a control panel (recommended).
+     Rebuild the VPS choosing plain "Ubuntu 24.04", then run this again.
+     This wipes the server, so only do it if there is nothing else on it.
+
+  2. Stop the program using the ports, if you do not need it:
+       sudo systemctl stop    apache2 nginx lshttpd lsws caddy 2>/dev/null
+       sudo systemctl disable apache2 nginx lshttpd lsws caddy 2>/dev/null
+     Then run this installer again.
+
+  If something else important is already running on this server, tell whoever
+  set it up — the two cannot share these ports without extra configuration.
+PORTHELP
+  exit 1
+}
 
 # ------------------------------------------------------------------- fetch
 step "Getting the software"
@@ -158,6 +243,10 @@ CADDYEOF
 fi
 
 # ----------------------------------------------------------------- launch
+step "Checking the web ports are free"
+check_web_ports
+say "Ports 80 and 443 are available."
+
 step "Building and starting (first run takes a few minutes)"
 docker compose -f "$COMPOSE_FILE" up -d --build \
   || die "Startup failed. See what went wrong with:  cd $INSTALL_DIR && docker compose -f $COMPOSE_FILE logs"
